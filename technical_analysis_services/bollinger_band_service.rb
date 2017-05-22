@@ -4,7 +4,6 @@ class BollingerBandService
   # データ不足
   LACK_DATA = 0
 
-
   NON = 999
   LONG = 100
   SHORT = 101
