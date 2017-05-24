@@ -17,7 +17,12 @@ class ChatworkService
   def get_message(room_id: @room_id)
     return [] unless @is_action
 
-    result = ChatWork::Message.get(room_id: room_id)
+    begin
+      result = ChatWork::Message.get(room_id: room_id)
+    rescue => e
+      # そこまで緊急ではないと思うので失敗時はスキップ
+      return []
+    end
 
     if result.class == Array
       result.map { |msg| msg["body"] }
