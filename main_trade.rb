@@ -116,7 +116,6 @@ loop do
     end
 
     if save_seed
-
       # データ格納用のディレクトリ作成
       path = "#{File.expand_path(File.dirname($0))}/seed_datas/#{Time.now.strftime("%Y%m%d")}"
       FileUtils.mkdir_p(path) unless FileTest.exist?(path)

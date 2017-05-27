@@ -41,6 +41,7 @@ module SeedSaveModule
 
   def ticker_seed_save(coincheck_client, path, id)
     CSV.open("#{path}/ticker.csv",'a') do |test|
+      test << %w(id json_body trade_time_int)
       begin
         retries = 0
         response = coincheck_client.read_ticker
@@ -65,6 +66,7 @@ module SeedSaveModule
 
   def trade_seed_save(coincheck_client, path, id)
     CSV.open("#{path}/trade.csv",'a') do |test|
+      test << %w(id json_body trade_time_int)
       begin
         retries = 0
         response = coincheck_client.read_trades
@@ -89,6 +91,7 @@ module SeedSaveModule
 
   def order_book_seed_save(coincheck_client, path, id)
     CSV.open("#{path}/order_book.csv",'a') do |test|
+      test << %w(id json_body trade_time_int)
       begin
         retries = 0
         response = coincheck_client.read_order_books
@@ -113,6 +116,7 @@ module SeedSaveModule
 
   def rate_seed_save(btc_jpy_https, path, id)
     CSV.open("#{path}/rate.csv",'a') do |test|
+      test << %w(id json_body trade_time_int pair)
       begin
         retries = 0
         uri = URI.parse("https://coincheck.jp/api/rate/btc_jpy")
@@ -137,9 +141,9 @@ module SeedSaveModule
         end
       end
       test << if response.code_type == Net::HTTPOK
-                [id, response.body, now_time_int]
+                [id, response.body, now_time_int, "btc_jpy"]
               else
-                [id, "取得失敗", now_time_int]
+                [id, "取得失敗", now_time_int, "btc_jpy"]
               end
 
     end
