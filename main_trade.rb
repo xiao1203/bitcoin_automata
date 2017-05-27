@@ -6,13 +6,16 @@ require 'chronic'
 require './technical_analysis_services/bollinger_band_service'
 require './util/http_module'
 require './util/order_module'
+require './util/seed_save_module'
 require './util/chatwork_service'
 include HttpModule
 include OrderModule
+include SeedSaveModule
 
 require 'logger'
 
 running_back_test = false
+save_seed = false
 ARGV.each do |argv|
   # コマンド引数に"test"とあったらバックテスト運用
   running_back_test = true if argv == "test"
@@ -88,6 +91,16 @@ cc = CoincheckClient.new(USER_KEY,
 
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
 bollinger_band_service = BollingerBandService.new(chat)
+id = 1
+btc_jpy_http = nil
+
+if save_seed
+  # レート取得の為、httpインスタンス作成
+  uri = URI.parse("https://coincheck.jp/api/rate/btc_jpy")
+  btc_jpy_https = Net::HTTP.new(uri.host, uri.port)
+  btc_jpy_https.use_ssl = true
+end
+
 
 loop do
   # 強制終了の確認
@@ -100,6 +113,15 @@ loop do
       break
     elsif messages.find { |msg| msg == "動作確認" }
       chat.send_message(message: "処理実行しています")
+    end
+
+    if save_seed
+
+      # データ格納用のディレクトリ作成
+      path = "#{File.expand_path(File.dirname($0))}/seed_datas/#{Time.now.strftime("%Y%m%d")}"
+      FileUtils.mkdir_p(path) unless FileTest.exist?(path)
+      save_seed_csv(cc, path, id, btc_jpy_https)
+      id += 1
     end
 
     # 現在のレート確認
