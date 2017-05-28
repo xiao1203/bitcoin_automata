@@ -8,24 +8,13 @@ class BollingerBandService
   LONG = 100
   SHORT = 101
 
-  # 足の単位時間
-  RANGE_SEC = 60
-
   # チェックを開始できる単位数(必ず2以上、通常は30)
   TARGET_NUM = 30
 
   VALUES_BOX_SIZE = 200 # データセット格納数
   SIGNAL_HISTORY_BOX_SIZE = 100 # シグナル履歴格納数
 
-  SIGNIFICANT_POINT = 2 # 外れ値判定の有意点
-  EXPANSION_CHECK_RANGE = 5 # エクスパンション判定の標本数
-
-  # くびれチェック
-  CONSTRICT_VALUES_BOX_MAX_SIZE = 30 # 最大標本数（最小は4)
-  BALANCE_RATE = 1.4
-
-
-  def initialize(chat_client = nil)
+  def initialize(chat_client = nil, init_gene_code = nil)
     @unit_rates = [] # 単位時間ごとのレート格納（例：1分足の場合、timestampのfirstとlastの差が60秒程度のもののグループ）
     @rates = [] # 単位時間ごとの平均値と最終時間を格納
     @values = [] # 最終成果物として、その時間の各値を格納
@@ -33,6 +22,84 @@ class BollingerBandService
 
     @signal_histories = [] # シグナル発生履歴の格納
 
+    # 遺伝子コードの仕様は
+    # https://github.com/xiao1203/ga_trade_params_generator/blob/master/models/gene.rb#L42L52
+    # https://github.com/xiao1203/ga_trade_params_generator/blob/master/modules/score_services/bollinger_band_service.rb#L26L65
+    # に準拠
+    if init_gene_code
+      # 足の単位時間
+      @range_sec = init_gene_code[0..8].to_i(2)
+      @range_sec = @range_sec <= 20 ? 20 : @range_sec
+
+      # 外れ値判定の有意点
+      # ここは2固定の方が良いかも
+      @significant_point = init_gene_code[9..11].to_i(2)
+      @significant_point = @significant_point <= 2 ? 2 : @significant_point
+
+      # エクスパンション判定の標本数
+      @expansion_check_range = init_gene_code[12..15].to_i(2)
+      @expansion_check_range = @expansion_check_range <= 3 ? 3 : @expansion_check_range
+
+      # くびれチェック
+      # 最大標本数（最小は4)
+      @constrict_values_box_max_size = init_gene_code[16..20].to_i(2)
+      @constrict_values_box_max_size = @constrict_values_box_max_size <= 4 ? 4 : @constrict_values_box_max_size
+
+      @balance_rate = init_gene_code[21..30].to_i(2)
+      @balance_rate = @balance_rate <= 120 ? 120 : @balance_rate
+      @balance_rate = @balance_rate * 0.01
+
+      short_range_start = init_gene_code[31..34].to_i(2)
+      short_range_end = init_gene_code[35..38].to_i(2)
+      short_range_start = short_range_start <= 0 ? 1 : short_range_start
+      short_range_end = short_range_end <= 0 ? 3 : short_range_end
+      @short_constrict_range = if short_range_start < short_range_end
+                                 short_range_start..short_range_end
+                               else
+                                 short_range_end..short_range_start
+                               end
+
+      long_range_start = init_gene_code[39..44].to_i(2)
+      long_range_end = init_gene_code[45..50].to_i(2)
+      long_range_start = long_range_start <= 0 ? 1 : long_range_start
+      long_range_end = long_range_end <= 0 ? 3 : long_range_end
+      @long_constrict_range = if long_range_start < long_range_end
+                                long_range_start..long_range_end
+                              else
+                                long_range_end..long_range_start
+                              end
+
+      params_msg = <<-EOS
+足の単位時間: #{@range_sec}
+外れ値判定の有意点: #{@significant_point}
+エクスパンション判定の標本数: #{@expansion_check_range}
+くびれチェック
+@constrict_values_box_max_size: #{@constrict_values_box_max_size}
+@balance_rate: #{@balance_rate}
+@short_constrict_range: #{@short_constrict_range}
+@long_constrict_range: #{@long_constrict_range}
+      EOS
+
+      puts params_msg
+    else
+      # 足の単位時間
+      @range_sec = 60
+
+      # 外れ値判定の有意点
+      # ここは2固定の方が良いかも
+      @significant_point = 2
+
+      # エクスパンション判定の標本数
+      @expansion_check_range = 5
+
+      # くびれチェック
+      # 最大標本数（最小は4)
+      @constrict_values_box_max_size = 30
+      @balance_rate = 1.4
+
+      @short_constrict_range = 3...10
+      @long_constrict_range = 15...30
+    end
   end
 
   def get_signal_history
@@ -42,8 +109,8 @@ class BollingerBandService
   def set_rate(rate:, timestamp:)
     @unit_rates.push({rate: rate, timestamp: Time.at(timestamp)})
 
-    if @unit_rates.last[:timestamp] - @unit_rates.first[:timestamp] > RANGE_SEC
-      # 最初と最後の格納データのtimestampがRANGE_SECを初めて超えた時
+    if @unit_rates.last[:timestamp] - @unit_rates.first[:timestamp] > @range_sec
+      # 最初と最後の格納データのtimestampが@range_secを初めて超えた時
       rates = @unit_rates.map{ |unit_rate| unit_rate[:rate] }
       start =  @unit_rates.first[:rate] # 始値
       last =  @unit_rates.last[:rate] # 終値
@@ -57,7 +124,7 @@ class BollingerBandService
       # 単位配列の初期化
       @unit_rates = []
     else
-      # RANGE_SEC分のデータが溜まっていないので後続処理には渡さない
+      # @range_sec分のデータが溜まっていないので後続処理には渡さない
       return
     end
 
@@ -143,8 +210,8 @@ class BollingerBandService
     # エクスパンション & バンドウォーク
     signal_result[:expansion] = is_expansion?
     # くびれ形成(短期レンジ、長期レンジを見る)
-    signal_result[:short_constrict] = is_constrict?(range: 3...10, balance_late: BALANCE_RATE)
-    signal_result[:long_constrict] = is_constrict?(range: 15...30, balance_late: BALANCE_RATE )
+    signal_result[:short_constrict] = is_constrict?(range: @short_constrict_range, balance_late: @balance_rate)
+    signal_result[:long_constrict] = is_constrict?(range: @long_constrict_range, balance_late: @balance_rate )
     # W-ボトム
     signal_result[:w_bottom] = is_w_bottom?
     # M-トップ
@@ -184,9 +251,9 @@ class BollingerBandService
   def is_squeeze?
     # 最新の標準偏差が過去5本ぶんから外れ値がないことを判定する
     size = @values.size
-    sds = @values[(size - EXPANSION_CHECK_RANGE)...size].map{ |value| value[:sd] }
+    sds = @values[(size - @expansion_check_range)...size].map{ |value| value[:sd] }
 
-    res = check_outlier(ary: sds, val: sds.last, significant: 1.9)
+    res = check_outlier(ary: sds, val: sds.last, significant: @significant_point)
     res[:result] == false
   end
 
@@ -199,7 +266,7 @@ class BollingerBandService
   def is_expansion?
     # 最新の標準偏差が過去5本ぶんから外れ値であるかを判定する
     size = @values.size
-    sds = @values[(size - EXPANSION_CHECK_RANGE)...size].map{ |value| value[:sd] }
+    sds = @values[(size - @expansion_check_range)...size].map{ |value| value[:sd] }
     res = check_outlier(ary: sds, val: sds.last, significant: 1.9)
 
     return false unless res[:result]
@@ -281,7 +348,7 @@ class BollingerBandService
   ## result 計算結果を有意値と比較し他結果
   ## outlier 計算結果
   # FIXME 厳密に判定する為にはスミルノフ・グラブス検定がしたいが計算がよくわからん。。。orz
-  def check_outlier(ary:, val:, range: EXPANSION_CHECK_RANGE, significant: SIGNIFICANT_POINT)
+  def check_outlier(ary:, val:, range: @expansion_check_range, significant: @significant_point)
     ary = ary[(ary.size - range)...ary.size]
     result = get_standard_deviation(ary)
     avg = result[:average] # 平均値

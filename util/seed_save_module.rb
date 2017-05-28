@@ -3,6 +3,29 @@ require "openssl"
 
 module SeedSaveModule
 
+  def save_header_csv(path)
+    csv = CSV.open("#{path}/ticker.csv",'a') do |test|
+      test << %w(id json_body trade_time_int)
+    end
+    csv.close
+
+    csv = CSV.open("#{path}/trade.csv",'a') do |test|
+      test << %w(id json_body trade_time_int)
+    end
+    csv.close
+
+    csv = CSV.open("#{path}/order_book.csv",'a') do |test|
+      test << %w(id json_body trade_time_int)
+    end
+    csv.close
+
+    csv = CSV.open("#{path}/rate.csv",'a') do |test|
+      test << %w(id json_body trade_time_int pair)
+    end
+    csv.close
+  end
+
+
   def save_seed_csv(coincheck_client, path, id, btc_jpy_https)
     threads = []
     threads << generate_saving_process do
@@ -40,8 +63,7 @@ module SeedSaveModule
 
 
   def ticker_seed_save(coincheck_client, path, id)
-    CSV.open("#{path}/ticker.csv",'a') do |test|
-      test << %w(id json_body trade_time_int)
+    csv = CSV.open("#{path}/ticker.csv",'a') do |test|
       begin
         retries = 0
         response = coincheck_client.read_ticker
@@ -62,11 +84,12 @@ module SeedSaveModule
               end
 
     end
+
+    csv.close
   end
 
   def trade_seed_save(coincheck_client, path, id)
-    CSV.open("#{path}/trade.csv",'a') do |test|
-      test << %w(id json_body trade_time_int)
+    csv = CSV.open("#{path}/trade.csv",'a') do |test|
       begin
         retries = 0
         response = coincheck_client.read_trades
@@ -87,11 +110,11 @@ module SeedSaveModule
               end
 
     end
+    csv.close
   end
 
   def order_book_seed_save(coincheck_client, path, id)
-    CSV.open("#{path}/order_book.csv",'a') do |test|
-      test << %w(id json_body trade_time_int)
+    csv = CSV.open("#{path}/order_book.csv",'a') do |test|
       begin
         retries = 0
         response = coincheck_client.read_order_books
@@ -112,11 +135,11 @@ module SeedSaveModule
               end
 
     end
+    csv.close
   end
 
   def rate_seed_save(btc_jpy_https, path, id)
-    CSV.open("#{path}/rate.csv",'a') do |test|
-      test << %w(id json_body trade_time_int pair)
+    csv = CSV.open("#{path}/rate.csv",'a') do |test|
       begin
         retries = 0
         uri = URI.parse("https://coincheck.jp/api/rate/btc_jpy")
@@ -147,6 +170,7 @@ module SeedSaveModule
               end
 
     end
+    csv.close
   end
 
 end

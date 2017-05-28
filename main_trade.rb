@@ -5,22 +5,31 @@ require "pry"
 require 'chronic'
 require './technical_analysis_services/bollinger_band_service'
 require './util/http_module'
-require './util/order_module'
+require './util/order_service'
 require './util/seed_save_module'
 require './util/chatwork_service'
 include HttpModule
-include OrderModule
 include SeedSaveModule
 
 require 'logger'
 
 running_back_test = false
 save_seed = false
+init_gene_code = nil
+order_execute = true
 ARGV.each do |argv|
   # コマンド引数に"test"とあったらバックテスト運用
   running_back_test = true if argv == "test"
   # コマンド引数に"seed"とあったらseed用データ保存
   save_seed = true if argv == "seed"
+
+  # コマンド引数に"0"と"1"で構成されている文字列(遺伝子コード)があったらその設定をインジケーターに反映させる
+  if argv.match(/^[01]{0,50}$/)
+    init_gene_code = argv
+  end
+
+  # コマンド引数に"non_order"とあったら発注処理は実施しない
+  order_execute = true if argv == "non_order"
 end
 
 logger = Logger.new("trade.log", "weekly")
@@ -90,18 +99,25 @@ cc = CoincheckClient.new(USER_KEY,
                           ssl: SSL})
 
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
-bollinger_band_service = BollingerBandService.new(chat)
+bollinger_band_service = BollingerBandService.new(chat, init_gene_code)
+order_service = OrderService.new(cc, logger, chat, order_execute)
 id = 1
-btc_jpy_http = nil
 
 if save_seed
   # レート取得の為、httpインスタンス作成
   uri = URI.parse("https://coincheck.jp/api/rate/btc_jpy")
   btc_jpy_https = Net::HTTP.new(uri.host, uri.port)
   btc_jpy_https.use_ssl = true
+
+  # データ格納用のディレクトリ作成
+  path = "#{File.expand_path(File.dirname($0))}/seed_datas/#{Time.now.strftime("%Y%m%d")}"
+  FileUtils.mkdir_p(path) unless FileTest.exist?(path)
+
+  # ヘッダ行の作成
+  save_header_csv(path)
 end
 
-
+count = 0
 loop do
   # 強制終了の確認
   begin
@@ -116,9 +132,6 @@ loop do
     end
 
     if save_seed
-      # データ格納用のディレクトリ作成
-      path = "#{File.expand_path(File.dirname($0))}/seed_datas/#{Time.now.strftime("%Y%m%d")}"
-      FileUtils.mkdir_p(path) unless FileTest.exist?(path)
       save_seed_csv(cc, path, id, btc_jpy_https)
       id += 1
     end
@@ -162,34 +175,28 @@ loop do
         order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2)
         message = "#{Time.at(timestamp)}に#{btc_jpy_bid_rate.to_i}円でショート"
         # ショートポジション
-        create_orders(coincheck_client: cc,
-                      logger: logger,
-                      chat_service: chat,
-                      order_type: "leverage_sell",
-                      rate: btc_jpy_bid_rate.to_i,
-                      amount: order_amount,
-                      market_buy_amount: nil,
-                      position_id: nil,
-                      pair: "btc_jpy",
-                      timestamp: timestamp,
-                      message: message)
+        order_service.execute(order_type: "leverage_sell",
+                              rate: btc_jpy_bid_rate.to_i,
+                              amount: order_amount,
+                              market_buy_amount: nil,
+                              position_id: nil,
+                              pair: "btc_jpy",
+                              timestamp: timestamp,
+                              message: message)
 
       elsif result == BollingerBandService::LONG
         sleep 1 unless running_back_test
         # ロングポジション
         order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2)
         message = "#{Time.at(timestamp)}に#{btc_jpy_ask_rate.to_i}円でロング"
-        create_orders(coincheck_client: cc,
-                      logger: logger,
-                      chat_service: chat,
-                      order_type: "leverage_buy",
-                      rate: btc_jpy_ask_rate.to_i,
-                      amount: order_amount,
-                      market_buy_amount: nil,
-                      position_id: nil,
-                      pair: "btc_jpy",
-                      timestamp: timestamp,
-                      message: message)
+        order_service.execute(order_type: "leverage_buy",
+                              rate: btc_jpy_ask_rate.to_i,
+                              amount: order_amount,
+                              market_buy_amount: nil,
+                              position_id: nil,
+                              pair: "btc_jpy",
+                              timestamp: timestamp,
+                              message: message)
       end
 
     else
@@ -209,17 +216,14 @@ loop do
           message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のロングポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
           # 現在の売り注文が利確金額以上なら利確
           # 現在の売り注文が損切り金額以下なら損切り
-          create_orders(coincheck_client: cc,
-                        logger: logger,
-                        chat_service: chat,
-                        order_type: "close_long",
-                        rate: btc_jpy_ask_rate.to_i,
-                        amount: positions.first["amount"],
-                        market_buy_amount: nil,
-                        position_id: positions.first["id"],
-                        pair: "btc_jpy",
-                        timestamp: timestamp,
-                        message: message)
+          order_service.execute(order_type: "close_long",
+                                rate: btc_jpy_ask_rate.to_i,
+                                amount: positions.first["amount"],
+                                market_buy_amount: nil,
+                                position_id: positions.first["id"],
+                                pair: "btc_jpy",
+                                timestamp: timestamp,
+                                message: message)
         end
 
       elsif positions[0]["side"] == "sell"
@@ -235,27 +239,27 @@ loop do
                          "損切"
                        end
           message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
-          create_orders(coincheck_client: cc,
-                        logger: logger,
-                        chat_service: chat,
-                        order_type: "close_short",
-                        rate: btc_jpy_bid_rate.to_i,
-                        amount: positions.first["amount"],
-                        market_buy_amount: nil,
-                        position_id: positions.first["id"],
-                        pair: "btc_jpy",
-                        timestamp: timestamp,
-                        message: message)
+          order_service.execute(order_type: "close_short",
+                                rate: btc_jpy_bid_rate.to_i,
+                                amount: positions.first["amount"],
+                                market_buy_amount: nil,
+                                position_id: positions.first["id"],
+                                pair: "btc_jpy",
+                                timestamp: timestamp,
+                                message: message)
         end
       end
     end
 
     # INTERVAL_TIME秒待機
     sleep INTERVAL_TIME unless running_back_test
-
+    if (count%200).zero?
+      puts "現在#{count}番目"
+    end
+    count += 1
     if running_back_test
       # 待機時間分、User.start_trade_timeを加算する
-      uri = URI.parse(BASE_URL + "api/update_start_trade_time?interval_time=#{10}")
+      uri = URI.parse(BASE_URL + "api/update_start_trade_time?interval_time=#{INTERVAL_TIME}")
       request_for_put(uri, HEADER)
 
       # 登録済みテストデータ分の処理を実行したかを確認
@@ -263,7 +267,6 @@ loop do
       response = request_for_get(uri, HEADER)
 
       if JSON.parse(response.body)["test_trade_is_over?"]
-
         # ポジションの強制決済
         sleep 1 unless running_back_test
         res = cc.read_positions(status: "open")
