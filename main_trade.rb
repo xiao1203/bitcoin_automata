@@ -8,15 +8,24 @@ require './util/http_module'
 require './util/order_service'
 require './util/seed_save_module'
 require './util/chatwork_service'
+require './util/go_spread_sheet_service'
 include HttpModule
 include SeedSaveModule
-
+require "google_drive"
 require 'logger'
 
 running_back_test = false
 save_seed = false
 init_gene_code = nil
 order_execute = true
+
+if defined?(PryByebug)
+  Pry.commands.alias_command 'c', 'continue'
+  Pry.commands.alias_command 's', 'step'
+  Pry.commands.alias_command 'n', 'next'
+  Pry.commands.alias_command 'f', 'finish'
+end
+
 ARGV.each do |argv|
   # コマンド引数に"test"とあったらバックテスト運用
   running_back_test = true if argv == "test"
@@ -40,9 +49,15 @@ CHATWORK_ROOM_ID = ENV["CHATWORK_ROOM_ID"]
 ACCESS_FAIL_INTERVAL_TIME = 3
 INTERVAL_TIME = 10
 
+GOOGLE_CLIENT_ID = ENV["GOOGLE_CLIENT_ID"]
+GOOGLE_SERCRET_KEY = ENV["GOOGLE_SERCRET_KEY"]
+OAUTH_CODE = ENV["OAUTH_CODE"]
+REFRESH_TOKEN = ENV["REFRESH_TOKEN"]
+SPREAD_SHEET_KEY = ENV["SPREAD_SHEET_KEY"]
+
 if running_back_test
-  # BASE_URL = "http://localhost:3000/"
-  BASE_URL = "http://192.168.11.6:3000/"
+  BASE_URL = "http://localhost:3000/"
+  # BASE_URL = "http://192.168.11.6:3000/"
   USER_KEY = "aaaaa"
   USER_SECRET_KEY = "vvvvvv"
   SSL = false
@@ -98,9 +113,15 @@ cc = CoincheckClient.new(USER_KEY,
                          {base_url: BASE_URL,
                           ssl: SSL})
 
+go_spreadsheet_service = GoSpreadSheetService.new(GOOGLE_CLIENT_ID,
+                                                  GOOGLE_SERCRET_KEY,
+                                                  REFRESH_TOKEN,
+                                                  SPREAD_SHEET_KEY)
+
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
-bollinger_band_service = BollingerBandService.new(chat, init_gene_code)
+bollinger_band_service = BollingerBandService.new(chat, init_gene_code, go_spreadsheet_service)
 order_service = OrderService.new(cc, logger, chat, order_execute)
+
 id = 1
 
 if save_seed

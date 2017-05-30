@@ -14,13 +14,18 @@ class BollingerBandService
   VALUES_BOX_SIZE = 200 # データセット格納数
   SIGNAL_HISTORY_BOX_SIZE = 100 # シグナル履歴格納数
 
-  def initialize(chat_client = nil, init_gene_code = nil)
+  def initialize(chat_client = nil, init_gene_code = nil, go_spreadsheet_service = nil)
     @unit_rates = [] # 単位時間ごとのレート格納（例：1分足の場合、timestampのfirstとlastの差が60秒程度のもののグループ）
     @rates = [] # 単位時間ごとの平均値と最終時間を格納
     @values = [] # 最終成果物として、その時間の各値を格納
     @chat_client = chat_client
 
+    @go_spreadsheet_service = go_spreadsheet_service
     @signal_histories = [] # シグナル発生履歴の格納
+
+    # # google spread sheet制御変数
+    # @row_index = 2
+    # @data_time = nil
 
     # 遺伝子コードの仕様は
     # https://github.com/xiao1203/ga_trade_params_generator/blob/master/models/gene.rb#L42L52
@@ -129,6 +134,8 @@ class BollingerBandService
     end
 
     rates_size = @rates.size
+    # puts "rates_size: #{rates_size}"
+    # puts "rates_size >= TARGET_NUM: #{rates_size >= TARGET_NUM}"
     if rates_size >= TARGET_NUM
       # 計算に必要な情報が揃った
       @rates = @rates[(rates_size - TARGET_NUM)...rates_size]
@@ -176,14 +183,49 @@ class BollingerBandService
   # 単純に現在のレートが
   def check_signal_exec(rate: ,timestamp:)
     # データ不足
+    # puts "check_signal_exec @values: #{@values.size} "
     return LACK_DATA if @values.size < TARGET_NUM
 
-    # 調査用の出力
-    # check = check_signal_pattern(rate: rate)
-    # return (@values.last.to_a.map{ |v| v[1] } << check[:expansion]<< check[:short_constrict]<< check[:long_constrict] << check[:squeeze]).to_s
+    check_signal = check_signal_pattern(rate: rate)
+    if @go_spreadsheet_service && @go_spreadsheet_service.ws_info[:bollinger_band_ws][:data_time] != @values.last[:timestamp].strftime("%Y-%m-%d %H:%M:%S")
+      unless @go_spreadsheet_service.get_value(x_position: 1, y_position: 1, sheet_index: 0) == "時間"
+        # ヘッダの作成
+        @go_spreadsheet_service.set_line(lines: %w(時間 移動平均 '+1σ '-1σ '+2σ '-2σ 中間値 始値 終値 最高値 最安値 分散 標準偏差
+                                                   expansion short_constrict long_constrict squeeze),
+                                         x_position: 1,
+                                         y_position: 1,
+                                         sheet_index: 0)
+      end
+
+      value_lines = []
+      value_lines << @values.last[:timestamp].strftime("%Y-%m-%d %H:%M:%S")
+      value_lines << @values.last[:avg]
+      value_lines << @values.last[:plus_one_std_dev]
+      value_lines << @values.last[:minus_one_std_dev]
+      value_lines << @values.last[:plus_two_std_dev]
+      value_lines << @values.last[:minus_two_std_dev]
+      value_lines << @values.last[:rate]
+      value_lines << @values.last[:start]
+      value_lines << @values.last[:last]
+      value_lines << @values.last[:max]
+      value_lines << @values.last[:min]
+      value_lines << @values.last[:var]
+      value_lines << @values.last[:sd]
+      value_lines << check_signal[:expansion].to_s
+      value_lines << check_signal[:short_constrict].to_s
+      value_lines << check_signal[:long_constrict].to_s
+      value_lines << check_signal[:squeeze].to_s
+
+      @go_spreadsheet_service.set_line(lines: value_lines,
+                                       x_position: 1,
+                                       y_position: @go_spreadsheet_service.ws_info[:bollinger_band_ws][:row_index],
+                                       sheet_index: 0)
+      @go_spreadsheet_service.ws_info[:bollinger_band_ws][:row_index] += 1
+      @go_spreadsheet_service.ws_info[:bollinger_band_ws][:data_time] = @values.last[:timestamp].strftime("%Y-%m-%d %H:%M:%S")
+    end
 
     @signal_histories.push({
-                             signal: check_signal_pattern(rate: rate),
+                             signal: check_signal,
                              rate: rate.to_f,
                              timestamp: timestamp,
                              time: Time.now
@@ -234,11 +276,11 @@ class BollingerBandService
         return SHORT
       end
     end
-
-    # 仲値が+2σを上回っている状態が続き、下落傾向が発生
-    if is_trend_pattern_2?
-      return LONG
-    end
+    #
+    # # 仲値が+2σを上回っている状態が続き、下落傾向が発生
+    # if is_trend_pattern_2?
+    #   return LONG
+    # end
 
     NON
   end
@@ -298,6 +340,7 @@ class BollingerBandService
       values = @values[(size - count)...size]
       # 標本中の最小標準偏差
       min_sd = values.map{ |value| value[:sd] }.min
+
       return false if min_sd.zero?
 
       # 標本を２分割し、それぞれの最大標準偏差を取得（countが奇数の時、取りこぼしが発生するけど、一旦これで）
