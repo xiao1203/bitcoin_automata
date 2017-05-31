@@ -8,9 +8,6 @@ class BollingerBandService
   LONG = 100
   SHORT = 101
 
-  # チェックを開始できる単位数(必ず2以上、通常は30)
-  TARGET_NUM = 30
-
   VALUES_BOX_SIZE = 200 # データセット格納数
   SIGNAL_HISTORY_BOX_SIZE = 100 # シグナル履歴格納数
 
@@ -105,6 +102,9 @@ class BollingerBandService
       @short_constrict_range = 3...10
       @long_constrict_range = 15...30
     end
+
+    # チェックを開始できる単位数(必ず2以上、通常は30)
+    @target_count = [@short_constrict_range.max, @long_constrict_range.max, 30].max
   end
 
   def get_signal_history
@@ -136,9 +136,9 @@ class BollingerBandService
     rates_size = @rates.size
     # puts "rates_size: #{rates_size}"
     # puts "rates_size >= TARGET_NUM: #{rates_size >= TARGET_NUM}"
-    if rates_size >= TARGET_NUM
+    if rates_size >= @target_count
       # 計算に必要な情報が揃った
-      @rates = @rates[(rates_size - TARGET_NUM)...rates_size]
+      @rates = @rates[(rates_size - @target_count)...rates_size]
       avg_ary = @rates.map{ |rate| rate[:avg] }
 
       # 高値
@@ -184,7 +184,7 @@ class BollingerBandService
   def check_signal_exec(rate: ,timestamp:)
     # データ不足
     # puts "check_signal_exec @values: #{@values.size} "
-    return LACK_DATA if @values.size < TARGET_NUM
+    return LACK_DATA if @values.size < @target_count
 
     check_signal = check_signal_pattern(rate: rate)
     if @go_spreadsheet_service && @go_spreadsheet_service.ws_info[:bollinger_band_ws][:data_time] != @values.last[:timestamp].strftime("%Y-%m-%d %H:%M:%S")
