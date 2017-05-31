@@ -309,7 +309,7 @@ class BollingerBandService
     # 最新の標準偏差が過去5本ぶんから外れ値であるかを判定する
     size = @values.size
     sds = @values[(size - @expansion_check_range)...size].map{ |value| value[:sd] }
-    res = check_outlier(ary: sds, val: sds.last, significant: 1.9)
+    res = check_outlier(ary: sds, val: sds.last, significant: @significant_point)
 
     return false unless res[:result]
 
