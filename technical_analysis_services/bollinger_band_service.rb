@@ -18,6 +18,13 @@ class BollingerBandService
     @chat_client = chat_client
 
     @go_spreadsheet_service = go_spreadsheet_service
+    # ヘッダの作成
+    @go_spreadsheet_service.set_line(lines: %w(時間 移動平均 '+1σ '-1σ '+2σ '-2σ 中間値 始値 終値 最高値 最安値 分散 標準偏差
+                                                   expansion short_constrict long_constrict squeeze),
+                                     x_position: 1,
+                                     y_position: 1,
+                                     sheet_index: 0)
+    
     @signal_histories = [] # シグナル発生履歴の格納
 
     # # google spread sheet制御変数
@@ -188,15 +195,6 @@ class BollingerBandService
 
     check_signal = check_signal_pattern(rate: rate)
     if @go_spreadsheet_service && @go_spreadsheet_service.ws_info[:bollinger_band_ws][:data_time] != @values.last[:timestamp].strftime("%Y-%m-%d %H:%M:%S")
-      unless @go_spreadsheet_service.get_value(x_position: 1, y_position: 1, sheet_index: 0) == "時間"
-        # ヘッダの作成
-        @go_spreadsheet_service.set_line(lines: %w(時間 移動平均 '+1σ '-1σ '+2σ '-2σ 中間値 始値 終値 最高値 最安値 分散 標準偏差
-                                                   expansion short_constrict long_constrict squeeze),
-                                         x_position: 1,
-                                         y_position: 1,
-                                         sheet_index: 0)
-      end
-
       value_lines = []
       value_lines << @values.last[:timestamp].strftime("%Y-%m-%d %H:%M:%S")
       value_lines << @values.last[:avg]
