@@ -173,9 +173,6 @@ loop do
 
     result = bollinger_band_service.check_signal_exec(rate: btc_jpy_rate,
                                                       timestamp: timestamp) # 試験的に
-    # if result != BollingerBandService::LACK_DATA
-    #   puts result
-    # end
 
     # ポジションの確認
     sleep 1 unless running_back_test
