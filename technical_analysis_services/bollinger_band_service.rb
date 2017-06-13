@@ -6,7 +6,14 @@ class BollingerBandService
 
   NON = 999
   LONG = 100
-  SHORT = 101
+  MIDDLE_LONG = 101
+  HIGH_LONG = 102
+  SHORT = 200
+  MIDDLE_SHORT = 201
+  HIGH_SHORT = 202
+
+  SELL_TREND = 300
+  BUY_TREND = 301
 
   VALUES_BOX_SIZE = 200 # データセット格納数
   SIGNAL_HISTORY_BOX_SIZE = 100 # シグナル履歴格納数
@@ -19,12 +26,14 @@ class BollingerBandService
 
     @go_spreadsheet_service = go_spreadsheet_service
     # ヘッダの作成
-    @go_spreadsheet_service.set_line(lines: %w(時間 移動平均 '+1σ '-1σ '+2σ '-2σ 中間値 始値 終値 最高値 最安値 分散 標準偏差
-                                                   expansion short_constrict long_constrict squeeze),
+    @go_spreadsheet_service.set_line(lines: %w(時間 移動平均 '+1σ '-1σ '+2σ '-2σ 中間値 販売レート 始値 終値 最高値 最安値 分散 標準偏差
+                                                   expansion short_constrict long_constrict squeeze
+                                                   trades_sell_amount_sum trades_buy_amount_sum trades_trend
+                                                   order_books_asks_amount_sum order_books_bids_amount_sum order_bookss_trend),
                                      x_position: 1,
                                      y_position: 1,
                                      sheet_index: 0)
-    
+
     @signal_histories = [] # シグナル発生履歴の格納
 
     # # google spread sheet制御変数
@@ -118,7 +127,7 @@ class BollingerBandService
     @signal_histories
   end
 
-  def set_rate(rate:, timestamp:)
+  def set_values(rate:, sell_rate:, trades:, order_books:, timestamp:)
     @unit_rates.push({rate: rate, timestamp: Time.at(timestamp)})
 
     if @unit_rates.last[:timestamp] - @unit_rates.first[:timestamp] > @range_sec
@@ -176,7 +185,10 @@ class BollingerBandService
                        minus_one_std_dev: minus_one_std_dev.to_i,
                        plus_two_std_dev: plus_two_std_dev.to_i,
                        minus_two_std_dev: minus_two_std_dev.to_i,
-                       timestamp: @rates.last[:timestamp]
+                       timestamp: @rates.last[:timestamp],
+                       trades: trades,
+                       order_books: order_books,
+                       sell_rate: sell_rate
                    })
 
       # VALUES_BOX_SIZE個保持
@@ -203,6 +215,7 @@ class BollingerBandService
       value_lines << @values.last[:plus_two_std_dev]
       value_lines << @values.last[:minus_two_std_dev]
       value_lines << @values.last[:rate]
+      value_lines << @values.last[:sell_rate]
       value_lines << @values.last[:start]
       value_lines << @values.last[:last]
       value_lines << @values.last[:max]
@@ -214,6 +227,26 @@ class BollingerBandService
       value_lines << check_signal[:long_constrict].to_s
       value_lines << check_signal[:squeeze].to_s
 
+      trades_sell_amount_sum = @values.last[:trades].select { |trade| trade["order_type"] == "sell"}.map{ |t| BigDecimal(t["amount"]) }.inject(:+).to_f
+      trades_buy_amount_sum = @values.last[:trades].select { |trade| trade["order_type"] == "buy"}.map{ |t| BigDecimal(t["amount"]) }.inject(:+).to_f
+      value_lines << trades_sell_amount_sum
+      value_lines << trades_buy_amount_sum
+      value_lines << if trades_sell_amount_sum > trades_buy_amount_sum
+                       "売りトレード優勢"
+                     else
+                       "買いトレード優勢"
+                     end
+
+      order_books_asks_amount_sum = @values.last[:order_books]["asks"].map { |o| BigDecimal(o[1]) }.inject(:+).to_f
+      order_books_bids_amount_sum = @values.last[:order_books]["bids"].map { |o| BigDecimal(o[1]) }.inject(:+).to_f
+      value_lines << order_books_asks_amount_sum
+      value_lines << order_books_bids_amount_sum
+      value_lines << if order_books_asks_amount_sum > order_books_bids_amount_sum
+                       "買い優勢"
+                     else
+                       "売り優勢"
+                     end
+
       @go_spreadsheet_service.set_line(lines: value_lines,
                                        x_position: 1,
                                        y_position: @go_spreadsheet_service.ws_info[:bollinger_band_ws][:row_index],
@@ -224,7 +257,12 @@ class BollingerBandService
 
     @signal_histories.push({
                              signal: check_signal,
+                             trades_sell_amount_sum: trades_sell_amount_sum,
+                             trades_buy_amount_sum: trades_buy_amount_sum,
+                             order_books_asks_amount_sum: order_books_asks_amount_sum,
+                             order_books_bids_amount_sum: order_books_bids_amount_sum,
                              rate: rate.to_f,
+                             value: @values.last,
                              timestamp: timestamp,
                              time: Time.now
                          })
@@ -236,7 +274,6 @@ class BollingerBandService
     end
 
     return trade_signal
-
   end
 
   private
@@ -265,15 +302,55 @@ class BollingerBandService
     signal_history = signal_histories.last
     values = @values.last
 
-    if is_trend_pattern_1?(signal_history)
-      if values[:max] > values[:plus_two_std_dev]
-        # 最高値が+2σを上回っている
-        return LONG
-      elsif values[:min] < values[:minus_two_std_dev]
-        # 最安値が-2σを上回っている
+    return NON if signal_histories.size < 3
+
+    trades_sell_amount_sum = signal_history[:trades_sell_amount_sum] || @values.last[:trades].select { |trade| trade["order_type"] == "sell"}.map{ |t| BigDecimal(t["amount"]) }.inject(:+).to_f
+    trades_buy_amount_sum = signal_history[:trades_buy_amount_sum] || @values.last[:trades].select { |trade| trade["order_type"] == "buy"}.map{ |t| BigDecimal(t["amount"]) }.inject(:+).to_f
+    trades_amount_sum_trend = if trades_sell_amount_sum > trades_buy_amount_sum
+                                SELL_TREND
+                              else
+                                BUY_TREND
+                              end
+    order_books_asks_amount_sum = signal_history[:order_books_asks_amount_sum] || @values.last[:order_books]["asks"].map { |o| BigDecimal(o[1]) }.inject(:+).to_f
+    order_books_bids_amount_sum = signal_history[:order_books_bids_amount_sum] || @values.last[:order_books]["bids"].map { |o| BigDecimal(o[1]) }.inject(:+).to_f
+    order_books_amount_sum_trend = if order_books_asks_amount_sum > order_books_bids_amount_sum
+                                     BUY_TREND
+                                   else
+                                     SELL_TREND
+                                   end
+
+    # 直近３つの中間値が -1.5σ 〜 移動平均 のところにいる場合、売りトレンド(Short)は無効
+    # 直近３つの中間値が 移動平均 〜 1.5σ のところにいる場合、買いトレンド(Long)は、無効
+    last_3 = signal_histories[signal_histories.size - 3]
+    last_2 = signal_histories[signal_histories.size - 2]
+    last_1 = signal_histories[signal_histories.size - 1]
+
+    average_rate = (last_3[:rate] + last_2[:rate] + last_1[:rate])/3
+    plus_1_5_std_dev = (signal_history[:value][:plus_one_std_dev] + signal_history[:value][:plus_two_std_dev])/2
+    minus_1_5_std_dev = (signal_history[:value][:minus_one_std_dev] + signal_history[:value][:minus_two_std_dev])/2
+
+    long_range_signal = plus_1_5_std_dev > average_rate && signal_history[:value][:avg] < average_rate
+    short_range_signal = minus_1_5_std_dev < average_rate && signal_history[:value][:avg] > average_rate
+
+    if signal_history[:signal][:expansion] || signal_history[:signal][:short_constrict] || signal_history[:signal][:long_constrict]
+      if trades_amount_sum_trend == SELL_TREND && order_books_amount_sum_trend == SELL_TREND && short_range_signal
         return SHORT
+      elsif trades_amount_sum_trend == BUY_TREND && order_books_amount_sum_trend == BUY_TREND && long_range_signal
+        return LONG
       end
     end
+
+    # if is_trend_pattern_1?(signal_history)
+    #   if values[:max] > values[:plus_two_std_dev]
+    #     # 最高値が+2σを上回っている
+    #     binding.pry
+    #     return LONG
+    #   elsif values[:min] < values[:minus_two_std_dev]
+    #     # 最安値が-2σを上回っている
+    #     binding.pry
+    #     return SHORT
+    #   end
+    # end
     #
     # # 仲値が+2σを上回っている状態が続き、下落傾向が発生
     # if is_trend_pattern_2?

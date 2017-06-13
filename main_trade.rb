@@ -4,11 +4,14 @@ require "thor"
 require "pry"
 require 'chronic'
 require './technical_analysis_services/bollinger_band_service'
+Dir["./util/*.rb"].each do |file|
+  require file
+end
 require './util/http_module'
-require './util/order_service'
-require './util/seed_save_module'
-require './util/chatwork_service'
-require './util/go_spread_sheet_service'
+# require './util/order_service'
+# require './util/seed_save_module'
+# require './util/chatwork_service'
+# require './util/go_spread_sheet_service'
 include HttpModule
 include SeedSaveModule
 require "google_drive"
@@ -56,9 +59,9 @@ REFRESH_TOKEN = ENV["REFRESH_TOKEN"]
 SPREAD_SHEET_KEY = ENV["SPREAD_SHEET_KEY"]
 
 if running_back_test
-  BASE_URL = "http://localhost:3000/"
+  COIN_CHECK_BASE_URL = "http://localhost:3000/"
   # BASE_URL = "http://192.168.11.6:3000/"
-  USER_KEY = "aaaaa"
+  USER_KEY = "ayt"
   USER_SECRET_KEY = "vvvvvv"
   SSL = false
   HEADER = {
@@ -66,7 +69,7 @@ if running_back_test
       "ACCESS-KEY" => USER_KEY
   }
 else
-  BASE_URL = "https://coincheck.jp/"
+  COIN_CHECK_BASE_URL = "https://coincheck.jp/"
   USER_KEY = ENV["COIN_CHECK_ACCESS_KEY"]
   USER_SECRET_KEY = ENV["COIN_CHECK_SECRET_KEY"]
   SSL = true
@@ -74,12 +77,12 @@ end
 
 if running_back_test
   # 登録済みヒストリカルデータより開始時間を設定
-  uri = URI.parse(BASE_URL + "api/set_test_trade_time")
+  uri = URI.parse(COIN_CHECK_BASE_URL + "api/set_test_trade_time")
   request_for_put(uri, HEADER)
 
   # 検証用の証拠金を設定
   test_margin = 200_000
-  uri = URI.parse(BASE_URL + "api/set_user_leverage_balance?margin=#{test_margin}")
+  uri = URI.parse(COIN_CHECK_BASE_URL + "api/set_user_leverage_balance?margin=#{test_margin}")
   request_for_put(uri, HEADER)
   msg = "テスト証拠金：#{test_margin}円セット"
   puts msg
@@ -92,25 +95,44 @@ if running_back_test
   # gemのメソッドをオーバーライドします
   class CoincheckClient
     def read_ticker
-      uri = URI.parse(BASE_URL + "api/ticker")
+      uri = URI.parse(COIN_CHECK_BASE_URL + "api/ticker")
       request_for_get(uri, HEADER)
     end
 
     def read_trades
-      uri = URI.parse(BASE_URL + "api/trades")
+      uri = URI.parse(COIN_CHECK_BASE_URL + "api/trades")
       request_for_get(uri, HEADER)
     end
 
     def read_order_books
-      uri = URI.parse(BASE_URL + "api/order_books")
+      uri = URI.parse(COIN_CHECK_BASE_URL + "api/order_books")
       request_for_get(uri, HEADER)
     end
   end
 end
 
+class CoincheckClient
+  # レート取得するメソッドがない。オーバーライドで作る
+  # tickerの中間値はどうも信用できないので独自にAPIを叩きに行くようするようにする
+  # TODO こっちはAPIの方が使えない
+  # def original_read_exchange_order_rate(order_type:, pair: "btc_jpy")
+  #   uri = URI.parse(COIN_CHECK_BASE_URL + "/api/exchange/orders/rate")
+  #   body = {
+  #       order_type: order_type,
+  #       pair: pair
+  #   }
+  #   request_for_get(uri, HEADER, body)
+  # end
+
+  def original_read_rate(pair: "btc_jpy")
+    uri = URI.parse(COIN_CHECK_BASE_URL + "api/rate/#{pair}")
+    request_for_get(uri, HEADER)
+  end
+end
+
 cc = CoincheckClient.new(USER_KEY,
                          USER_SECRET_KEY,
-                         {base_url: BASE_URL,
+                         {base_url: COIN_CHECK_BASE_URL,
                           ssl: SSL})
 
 go_spreadsheet_service = GoSpreadSheetService.new(GOOGLE_CLIENT_ID,
@@ -120,7 +142,7 @@ go_spreadsheet_service = GoSpreadSheetService.new(GOOGLE_CLIENT_ID,
 
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
 bollinger_band_service = BollingerBandService.new(chat, init_gene_code, go_spreadsheet_service)
-order_service = OrderService.new(cc, logger, chat, order_execute)
+order_service = OrderService.new(cc, logger, chat, order_execute, running_back_test)
 
 id = 1
 
@@ -158,14 +180,23 @@ loop do
     end
 
     # 現在のレート確認
-    logger.info("read_ticker")
     rate_res = cc.read_ticker
     btc_jpy_bid_rate =  BigDecimal(JSON.parse(rate_res.body)['bid']) # 現在の買い注文の最高価格
     btc_jpy_ask_rate =  BigDecimal(JSON.parse(rate_res.body)['ask']) # 現在の売り注文の最安価格
     timestamp =  JSON.parse(rate_res.body)['timestamp'].to_i
     btc_jpy_rate = (btc_jpy_bid_rate + btc_jpy_ask_rate)/2
-    bollinger_band_service.set_rate(rate: btc_jpy_rate,
-                                    timestamp: timestamp)
+
+    trades_res = cc.read_trades
+    order_books_res = cc.read_order_books
+
+    #coincheckのレート取得
+    rate_res = cc.original_read_rate
+
+    bollinger_band_service.set_values(rate: btc_jpy_rate,
+                                      sell_rate: JSON.parse(rate_res.body)["rate"],
+                                      trades: JSON.parse(trades_res.body),
+                                      order_books: JSON.parse(order_books_res.body),
+                                      timestamp: timestamp)
     logger.info(    "btc_jpy_bid_rate: #{btc_jpy_bid_rate.to_i}," +
                     "btc_jpy_ask_rate: #{btc_jpy_ask_rate.to_i}," +
                     "timestamp: #{Time.at(timestamp)}," +
@@ -186,87 +217,12 @@ loop do
     margin_available = JSON.parse(response.body)['margin_available']['jpy']
     logger.info("margin_available: #{margin_available}")
 
-    if positions.empty?
-      # ポジション無し
-      if result == BollingerBandService::SHORT
-        sleep 1 unless running_back_test
-        order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2)
-        message = "#{Time.at(timestamp)}に#{btc_jpy_bid_rate.to_i}円でショート"
-        # ショートポジション
-        order_service.execute(order_type: "leverage_sell",
-                              rate: btc_jpy_bid_rate.to_i,
-                              amount: order_amount,
-                              market_buy_amount: nil,
-                              position_id: nil,
-                              pair: "btc_jpy",
-                              timestamp: timestamp,
-                              message: message)
+    order_service.check_and_close_positions(positions, btc_jpy_bid_rate, btc_jpy_ask_rate, timestamp)
 
-      elsif result == BollingerBandService::LONG
-        sleep 1 unless running_back_test
-        # ロングポジション
-        order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2)
-        message = "#{Time.at(timestamp)}に#{btc_jpy_ask_rate.to_i}円でロング"
-        order_service.execute(order_type: "leverage_buy",
-                              rate: btc_jpy_ask_rate.to_i,
-                              amount: order_amount,
-                              market_buy_amount: nil,
-                              position_id: nil,
-                              pair: "btc_jpy",
-                              timestamp: timestamp,
-                              message: message)
-      end
-
-    else
-      open_rate = positions[0]["open_rate"]
-      # 1.5%以上の利益で利確
-      # -2.0%以下のロス発生で損切り
-      if positions[0]["side"] == "buy"
-        sleep 1 unless running_back_test
-        gain_rate = (open_rate * 1.015).to_i
-        loss_cut_rate = (open_rate * 0.98).to_i
-        if gain_rate <= btc_jpy_ask_rate || loss_cut_rate >= btc_jpy_ask_rate
-          trade_type = if gain_rate <= btc_jpy_ask_rate
-                         "利確"
-                       else
-                         "損切"
-                       end
-          message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のロングポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
-          # 現在の売り注文が利確金額以上なら利確
-          # 現在の売り注文が損切り金額以下なら損切り
-          order_service.execute(order_type: "close_long",
-                                rate: btc_jpy_ask_rate.to_i,
-                                amount: positions.first["amount"],
-                                market_buy_amount: nil,
-                                position_id: positions.first["id"],
-                                pair: "btc_jpy",
-                                timestamp: timestamp,
-                                message: message)
-        end
-
-      elsif positions[0]["side"] == "sell"
-        sleep 1 unless running_back_test
-        gain_rate = (open_rate * 0.985).to_i
-        loss_cut_rate = (open_rate * 1.02).to_i
-        if gain_rate >= btc_jpy_bid_rate || loss_cut_rate <= btc_jpy_bid_rate
-          # 現在の買い注文が利確金額以下なら利確
-          # 現在の買い注文が損切り金額以上なら損切り
-          trade_type = if gain_rate >= btc_jpy_bid_rate
-                         "利確"
-                       else
-                         "損切"
-                       end
-          message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
-          order_service.execute(order_type: "close_short",
-                                rate: btc_jpy_bid_rate.to_i,
-                                amount: positions.first["amount"],
-                                market_buy_amount: nil,
-                                position_id: positions.first["id"],
-                                pair: "btc_jpy",
-                                timestamp: timestamp,
-                                message: message)
-        end
-      end
+    if result == BollingerBandService::SHORT
+      order_service.set_start_short_position(margin_available, positions, btc_jpy_bid_rate, btc_jpy_ask_rate, timestamp)
+    elsif result == BollingerBandService::LONG
+      order_service.set_start_long_position(margin_available, positions, btc_jpy_ask_rate, btc_jpy_bid_rate, timestamp)
     end
 
     # INTERVAL_TIME秒待機
@@ -277,11 +233,11 @@ loop do
     count += 1
     if running_back_test
       # 待機時間分、User.start_trade_timeを加算する
-      uri = URI.parse(BASE_URL + "api/update_start_trade_time?interval_time=#{INTERVAL_TIME}")
+      uri = URI.parse(COIN_CHECK_BASE_URL + "api/update_start_trade_time?interval_time=#{INTERVAL_TIME}")
       request_for_put(uri, HEADER)
 
       # 登録済みテストデータ分の処理を実行したかを確認
-      uri = URI.parse(BASE_URL + "api/check_test_trade_is_over")
+      uri = URI.parse(COIN_CHECK_BASE_URL + "api/check_test_trade_is_over")
       response = request_for_get(uri, HEADER)
 
       if JSON.parse(response.body)["test_trade_is_over?"]
@@ -290,39 +246,35 @@ loop do
         res = cc.read_positions(status: "open")
         positions = JSON.parse(res.body)["data"]
         unless positions.empty?
-          if positions[0]["side"] == "buy"
-            message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のロングポジションを#{btc_jpy_ask_rate.to_i}で決済"
-            create_orders(coincheck_client: cc,
-                          logger: logger,
-                          chat_service: chat,
-                          order_type: "close_long",
-                          rate: btc_jpy_ask_rate.to_i,
-                          amount: positions.first["amount"],
-                          market_buy_amount: nil,
-                          position_id: positions.first["id"],
-                          pair: "btc_jpy",
-                          timestamp: timestamp,
-                          message: message)
 
-          else
-            message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_bid_rate.to_i}で決済"
-            create_orders(coincheck_client: cc,
-                          logger: logger,
-                          chat_service: chat,
-                          order_type: "close_short",
-                          rate: btc_jpy_bid_rate.to_i,
-                          amount: positions.first["amount"],
-                          market_buy_amount: nil,
-                          position_id: positions.first["id"],
-                          pair: "btc_jpy",
-                          timestamp: timestamp,
-                          message: message)
+          positions.each do |position|
+            if position["side"] == "buy"
+              message = "#{Time.at(timestamp)}に#{position['open_rate']}円のロングポジションを#{btc_jpy_ask_rate.to_i}で強制決済"
 
+              order_service.execute(order_type: "close_long",
+                                    rate: btc_jpy_ask_rate.to_i,
+                                    amount: position["amount"],
+                                    market_buy_amount: nil,
+                                    position_id: position["id"],
+                                    pair: "btc_jpy",
+                                    timestamp: timestamp,
+                                    message: message)
+            else
+              message = "#{Time.at(timestamp)}に#{position['open_rate']}円のショートポジションを#{btc_jpy_bid_rate.to_i}で強制決済"
+              order_service.execute(order_type: "close_short",
+                                    rate: btc_jpy_ask_rate.to_i,
+                                    amount: position["amount"],
+                                    market_buy_amount: nil,
+                                    position_id: position["id"],
+                                    pair: "btc_jpy",
+                                    timestamp: timestamp,
+                                    message: message)
+            end
           end
         end
 
         # レバレッジマージン情報を取得
-        uri = URI.parse(BASE_URL + "api/check_test_trade_is_over")
+        uri = URI.parse(COIN_CHECK_BASE_URL + "api/check_test_trade_is_over")
         response = request_for_get(uri, HEADER)
         leverage_balance = JSON.parse(response.body)["leverage_balance"]
         puts "テスト証拠金：#{leverage_balance['margin']}円になりました"
