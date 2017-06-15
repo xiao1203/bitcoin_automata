@@ -1,14 +1,15 @@
 class OrderService
-  def initialize(coincheck_client, logger, chat_service, order_execute, running_back_test)
+  def initialize(coincheck_client, logger, chat_service, order_executable, running_back_test)
     @coincheck_client = coincheck_client
     @logger = logger
     @chat_service = chat_service
-    @order_execute = order_execute
+    @order_execute = order_executable # オーダーを実際に行うか否かのフラグ
     @running_back_test = running_back_test
   end
 
   def execute(order_type:, rate:, amount:, market_buy_amount: nil, position_id: nil, pair: "btc_jpy", timestamp:, message:)
     if @order_execute
+      sleep 1 unless @running_back_test
       @coincheck_client.create_orders(order_type: order_type,
                                       rate: rate,
                                       amount: amount,

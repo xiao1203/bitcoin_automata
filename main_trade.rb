@@ -8,10 +8,7 @@ Dir["./util/*.rb"].each do |file|
   require file
 end
 require './util/http_module'
-# require './util/order_service'
-# require './util/seed_save_module'
-# require './util/chatwork_service'
-# require './util/go_spread_sheet_service'
+
 include HttpModule
 include SeedSaveModule
 require "google_drive"
@@ -20,7 +17,7 @@ require 'logger'
 running_back_test = false
 save_seed = false
 init_gene_code = nil
-order_execute = true
+order_executable = true
 
 if defined?(PryByebug)
   Pry.commands.alias_command 'c', 'continue'
@@ -41,7 +38,7 @@ ARGV.each do |argv|
   end
 
   # コマンド引数に"non_order"とあったら発注処理は実施しない
-  order_execute = true if argv == "non_order"
+  order_executable = true if argv == "non_order"
 end
 
 logger = Logger.new("trade.log", "weekly")
@@ -142,7 +139,7 @@ go_spreadsheet_service = GoSpreadSheetService.new(GOOGLE_CLIENT_ID,
 
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
 bollinger_band_service = BollingerBandService.new(chat, init_gene_code, go_spreadsheet_service)
-order_service = OrderService.new(cc, logger, chat, order_execute, running_back_test)
+order_service = OrderService.new(cc, logger, chat, order_executable, running_back_test)
 
 id = 1
 
@@ -219,10 +216,80 @@ loop do
 
     order_service.check_and_close_positions(positions, btc_jpy_bid_rate, btc_jpy_ask_rate, timestamp)
 
-    if result == BollingerBandService::SHORT
-      order_service.set_start_short_position(margin_available, positions, btc_jpy_bid_rate, btc_jpy_ask_rate, timestamp)
-    elsif result == BollingerBandService::LONG
-      order_service.set_start_long_position(margin_available, positions, btc_jpy_ask_rate, btc_jpy_bid_rate, timestamp)
+    if positions.empty?
+      # ポジション無し
+      if result == BollingerBandService::SHORT
+        order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2) # 全力
+        message = "#{Time.at(timestamp)}に#{btc_jpy_bid_rate.to_i}円でショート"
+        # ショートポジション
+        order_service.execute(order_type: "leverage_sell",
+                              rate: btc_jpy_bid_rate.to_i,
+                              amount: order_amount,
+                              market_buy_amount: nil,
+                              position_id: nil,
+                              pair: "btc_jpy",
+                              timestamp: timestamp,
+                              message: message)
+
+      elsif result == BollingerBandService::LONG
+        order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2)
+        message = "#{Time.at(timestamp)}に#{btc_jpy_ask_rate.to_i}円でロング"
+        order_service.execute(order_type: "leverage_buy",
+                              rate: btc_jpy_ask_rate.to_i,
+                              amount: order_amount,
+                              market_buy_amount: nil,
+                              position_id: nil,
+                              pair: "btc_jpy",
+                              timestamp: timestamp,
+                              message: message)
+      end
+    else
+      open_rate = positions[0]["open_rate"]
+      # 1.5%以上の利益で利確
+      # -2.0%以下のロス発生で損切り
+      if positions[0]["side"] == "buy"
+        gain_rate = (open_rate * 1.015).to_i
+        loss_cut_rate = (open_rate * 0.98).to_i
+        if gain_rate <= btc_jpy_ask_rate || loss_cut_rate >= btc_jpy_ask_rate
+          trade_type = if gain_rate <= btc_jpy_ask_rate
+                         "利確"
+                       else
+                         "損切"
+                       end
+          message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のロングポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
+          # 現在の売り注文が利確金額以上なら利確
+          # 現在の売り注文が損切り金額以下なら損切り
+          order_service.execute(order_type: "close_long",
+                                rate: btc_jpy_ask_rate.to_i,
+                                amount: positions.first["amount"],
+                                market_buy_amount: nil,
+                                position_id: positions.first["id"],
+                                pair: "btc_jpy",
+                                timestamp: timestamp,
+                                message: message)
+        elsif positions[0]["side"] == "sell"
+          gain_rate = (open_rate * 0.985).to_i
+          loss_cut_rate = (open_rate * 1.02).to_i
+          if gain_rate >= btc_jpy_bid_rate || loss_cut_rate <= btc_jpy_bid_rate
+            # 現在の買い注文が利確金額以下なら利確
+            # 現在の買い注文が損切り金額以上なら損切り
+            trade_type = if gain_rate >= btc_jpy_bid_rate
+                           "利確"
+                         else
+                           "損切"
+                         end
+            message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
+            order_service.execute(order_type: "close_short",
+                                  rate: btc_jpy_bid_rate.to_i,
+                                  amount: positions.first["amount"],
+                                  market_buy_amount: nil,
+                                  position_id: positions.first["id"],
+                                  pair: "btc_jpy",
+                                  timestamp: timestamp,
+                                  message: message)
+          end
+        end
+      end
     end
 
     # INTERVAL_TIME秒待機
