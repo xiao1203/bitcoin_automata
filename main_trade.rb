@@ -142,7 +142,22 @@ go_spreadsheet_service = GoSpreadSheetService.new(GOOGLE_CLIENT_ID,
                                                   SPREAD_SHEET_KEY)
 
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
-bollinger_band_service = BollingerBandService.new(chat, init_gene_code, go_spreadsheet_service)
+
+bollinger_band_service_params = {}
+if init_gene_code
+  bollinger_band_service_params = {
+      range_sec: init_gene_code[0..8].to_i(2), # 足の単位時間
+      significant_point: init_gene_code[9..11].to_i(2), # 外れ値判定の有意点
+      expansion_check_range: init_gene_code[12..15].to_i(2), # エクスパンション判定の標本数
+      constrict_values_box_max_size: init_gene_code[16..20].to_i(2), # くびれチェック
+      balance_rate: init_gene_code[21..30].to_i(2),
+      short_range_start: init_gene_code[31..34].to_i(2),
+      short_range_end: init_gene_code[35..38].to_i(2),
+      long_range_start: init_gene_code[39..44].to_i(2),
+      long_range_end: init_gene_code[45..50].to_i(2)
+  }
+end
+bollinger_band_service = BollingerBandService.new(chat, bollinger_band_service_params, go_spreadsheet_service)
 order_service = OrderService.new(cc, logger, chat, order_executable, running_back_test)
 
 id = 1

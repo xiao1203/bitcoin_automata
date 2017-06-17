@@ -18,7 +18,7 @@ class BollingerBandService
   VALUES_BOX_SIZE = 200 # データセット格納数
   SIGNAL_HISTORY_BOX_SIZE = 100 # シグナル履歴格納数
 
-  def initialize(chat_client = nil, init_gene_code = nil, go_spreadsheet_service = nil)
+  def initialize(chat_client = nil, bollinger_band_service_params = {}, go_spreadsheet_service = nil)
     @unit_rates = [] # 単位時間ごとのレート格納（例：1分足の場合、timestampのfirstとlastの差が60秒程度のもののグループ）
     @rates = [] # 単位時間ごとの平均値と最終時間を格納
     @values = [] # 最終成果物として、その時間の各値を格納
@@ -44,31 +44,31 @@ class BollingerBandService
     # https://github.com/xiao1203/ga_trade_params_generator/blob/master/models/gene.rb#L42L52
     # https://github.com/xiao1203/ga_trade_params_generator/blob/master/modules/score_services/bollinger_band_service.rb#L26L65
     # に準拠
-    if init_gene_code
+    unless bollinger_band_service_params.empty?
       # 足の単位時間
-      @range_sec = init_gene_code[0..8].to_i(2)
+      @range_sec = bollinger_band_service_params[:range_sec]
       @range_sec = @range_sec <= 20 ? 20 : @range_sec
 
       # 外れ値判定の有意点
       # ここは2固定の方が良いかも
-      @significant_point = init_gene_code[9..11].to_i(2)
+      @significant_point = bollinger_band_service_params[:significant_point]
       @significant_point = @significant_point <= 2 ? 2 : @significant_point
 
       # エクスパンション判定の標本数
-      @expansion_check_range = init_gene_code[12..15].to_i(2)
+      @expansion_check_range = bollinger_band_service_params[:expansion_check_range]
       @expansion_check_range = @expansion_check_range <= 3 ? 3 : @expansion_check_range
 
       # くびれチェック
       # 最大標本数（最小は4)
-      @constrict_values_box_max_size = init_gene_code[16..20].to_i(2)
+      @constrict_values_box_max_size = bollinger_band_service_params[:constrict_values_box_max_size]
       @constrict_values_box_max_size = @constrict_values_box_max_size <= 4 ? 4 : @constrict_values_box_max_size
 
-      @balance_rate = init_gene_code[21..30].to_i(2)
+      @balance_rate = bollinger_band_service_params[:balance_rate]
       @balance_rate = @balance_rate <= 120 ? 120 : @balance_rate
       @balance_rate = @balance_rate * 0.01
 
-      short_range_start = init_gene_code[31..34].to_i(2)
-      short_range_end = init_gene_code[35..38].to_i(2)
+      short_range_start = bollinger_band_service_params[:short_range_start]
+      short_range_end = bollinger_band_service_params[:short_range_end]
       short_range_start = short_range_start <= 0 ? 1 : short_range_start
       short_range_end = short_range_end <= 0 ? 3 : short_range_end
       @short_constrict_range = if short_range_start < short_range_end
@@ -77,8 +77,8 @@ class BollingerBandService
                                  short_range_end..short_range_start
                                end
 
-      long_range_start = init_gene_code[39..44].to_i(2)
-      long_range_end = init_gene_code[45..50].to_i(2)
+      long_range_start = bollinger_band_service_params[:long_range_start]
+      long_range_end = bollinger_band_service_params[:long_range_end]
       long_range_start = long_range_start <= 0 ? 1 : long_range_start
       long_range_end = long_range_end <= 0 ? 3 : long_range_end
       @long_constrict_range = if long_range_start < long_range_end
