@@ -4,7 +4,13 @@ class MaxAndSinglePositionBollinger
   attr_accessor :response_read_order_books
   attr_accessor :response_original_read_rate
 
-  def initialize(coincheck_client:, bollinger_band_service:, logger:, running_back_test:, order_service:)
+  def initialize(coincheck_client: nil,
+                 bollinger_band_service: nil,
+                 logger: nil,
+                 running_back_test: nil,
+                 order_service: nil,
+                 csv_data_list: {})
+
     @cc = coincheck_client
     @bollinger_band_service = bollinger_band_service
     @logger = logger
@@ -32,17 +38,17 @@ class MaxAndSinglePositionBollinger
     @response_original_read_rate = @cc.original_read_rate
 
     @bollinger_band_service.set_values(rate: btc_jpy_rate,
-                                      sell_rate: JSON.parse(@response_original_read_rate.body)["rate"],
-                                      trades: JSON.parse(@response_read_trades.body),
-                                      order_books: JSON.parse(@response_read_order_books.body),
-                                      timestamp: timestamp)
+                                       sell_rate: JSON.parse(@response_original_read_rate.body)["rate"],
+                                       trades: JSON.parse(@response_read_trades.body),
+                                       order_books: JSON.parse(@response_read_order_books.body),
+                                       timestamp: timestamp)
     @logger.info(    "btc_jpy_bid_rate: #{btc_jpy_bid_rate.to_i}," +
-                        "btc_jpy_ask_rate: #{btc_jpy_ask_rate.to_i}," +
-                        "timestamp: #{Time.at(timestamp)}," +
-                        "btc_jpy_rate: #{btc_jpy_rate.to_i}")
+                         "btc_jpy_ask_rate: #{btc_jpy_ask_rate.to_i}," +
+                         "timestamp: #{Time.at(timestamp)}," +
+                         "btc_jpy_rate: #{btc_jpy_rate.to_i}")
 
     result = @bollinger_band_service.check_signal_exec(rate: btc_jpy_rate,
-                                                      timestamp: timestamp) # 試験的に
+                                                       timestamp: timestamp) # 試験的に
 
     # ポジションの確認
     sleep 1 unless @running_back_test
@@ -65,25 +71,25 @@ class MaxAndSinglePositionBollinger
         message = "#{Time.at(timestamp)}に#{btc_jpy_bid_rate.to_i}円でショート"
         # ショートポジション
         @order_service.execute(order_type: "leverage_sell",
-                              rate: btc_jpy_bid_rate.to_i,
-                              amount: order_amount,
-                              market_buy_amount: nil,
-                              position_id: nil,
-                              pair: "btc_jpy",
-                              timestamp: timestamp,
-                              message: message)
+                               rate: btc_jpy_bid_rate.to_i,
+                               amount: order_amount,
+                               market_buy_amount: nil,
+                               position_id: nil,
+                               pair: "btc_jpy",
+                               timestamp: timestamp,
+                               message: message)
 
       elsif result == BollingerBandService::LONG
         order_amount = (margin_available / btc_jpy_bid_rate * 5).to_f.round(2)
         message = "#{Time.at(timestamp)}に#{btc_jpy_ask_rate.to_i}円でロング"
         @order_service.execute(order_type: "leverage_buy",
-                              rate: btc_jpy_ask_rate.to_i,
-                              amount: order_amount,
-                              market_buy_amount: nil,
-                              position_id: nil,
-                              pair: "btc_jpy",
-                              timestamp: timestamp,
-                              message: message)
+                               rate: btc_jpy_ask_rate.to_i,
+                               amount: order_amount,
+                               market_buy_amount: nil,
+                               position_id: nil,
+                               pair: "btc_jpy",
+                               timestamp: timestamp,
+                               message: message)
       end
     else
       open_rate = positions[0]["open_rate"]
@@ -102,13 +108,13 @@ class MaxAndSinglePositionBollinger
           # 現在の売り注文が利確金額以上なら利確
           # 現在の売り注文が損切り金額以下なら損切り
           @order_service.execute(order_type: "close_long",
-                                rate: btc_jpy_ask_rate.to_i,
-                                amount: positions.first["amount"],
-                                market_buy_amount: nil,
-                                position_id: positions.first["id"],
-                                pair: "btc_jpy",
-                                timestamp: timestamp,
-                                message: message)
+                                 rate: btc_jpy_ask_rate.to_i,
+                                 amount: positions.first["amount"],
+                                 market_buy_amount: nil,
+                                 position_id: positions.first["id"],
+                                 pair: "btc_jpy",
+                                 timestamp: timestamp,
+                                 message: message)
         elsif positions[0]["side"] == "sell"
           gain_rate = (open_rate * 0.985).to_i
           loss_cut_rate = (open_rate * 1.02).to_i
@@ -122,13 +128,13 @@ class MaxAndSinglePositionBollinger
                          end
             message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
             @order_service.execute(order_type: "close_short",
-                                  rate: btc_jpy_bid_rate.to_i,
-                                  amount: positions.first["amount"],
-                                  market_buy_amount: nil,
-                                  position_id: positions.first["id"],
-                                  pair: "btc_jpy",
-                                  timestamp: timestamp,
-                                  message: message)
+                                   rate: btc_jpy_bid_rate.to_i,
+                                   amount: positions.first["amount"],
+                                   market_buy_amount: nil,
+                                   position_id: positions.first["id"],
+                                   pair: "btc_jpy",
+                                   timestamp: timestamp,
+                                   message: message)
           end
         end
       end
