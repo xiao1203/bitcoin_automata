@@ -177,7 +177,7 @@ if save_seed
 end
 
 count = 0
-trade_stype = MaxAndSinglePositionBollinger.new(coincheck_client: cc,
+trade_style = MaxAndSinglePositionBollinger.new(coincheck_client: cc,
                                                 bollinger_band_service: bollinger_band_service,
                                                 logger: logger,
                                                 running_back_test: running_back_test,
@@ -201,7 +201,7 @@ loop do
     end
 
     # トレード実施
-    trade_stype.execute
+    trade_style.execute
 
     # INTERVAL_TIME秒待機
     sleep INTERVAL_TIME unless running_back_test

@@ -23,6 +23,8 @@ class MaxAndSinglePositionBollinger
     @response_original_read_rate
   end
 
+  # トレード処理
+  # 時間経過でなんども実行されることを想定
   def execute
     # 現在のレート確認
     @response_read_ticker = @cc.read_ticker
