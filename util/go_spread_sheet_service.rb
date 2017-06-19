@@ -21,7 +21,11 @@ class GoSpreadSheetService
         bollinger_band_ws: {
             row_index: 2,
             data_time: nil
-        }
+        },
+        double_position: {
+        row_index: 2,
+        data_time: nil
+    }
     }
   end
 

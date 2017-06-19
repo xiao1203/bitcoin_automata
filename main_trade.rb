@@ -41,6 +41,12 @@ ARGV.each do |argv|
     init_gene_code = argv
   end
 
+  match_date = argv.match(/^double_position(?<gene_code>\d{8,10})$/)
+  if match_date
+    seed_dir_name = match_date[:gene_code]
+    next
+  end
+
   # コマンド引数に"non_order"とあったら発注処理は実施しない
   order_executable = true if argv == "non_order"
 end
@@ -62,7 +68,7 @@ SPREAD_SHEET_KEY = ENV["SPREAD_SHEET_KEY"]
 if running_back_test
   COIN_CHECK_BASE_URL = "http://localhost:3000/"
   # BASE_URL = "http://192.168.11.6:3000/"
-  USER_KEY = "ayt"
+  USER_KEY = "ayddsdddt"
   USER_SECRET_KEY = "vvvvvv"
   SSL = false
   HEADER = {
@@ -177,11 +183,18 @@ if save_seed
 end
 
 count = 0
-trade_style = MaxAndSinglePositionBollinger.new(coincheck_client: cc,
-                                                bollinger_band_service: bollinger_band_service,
-                                                logger: logger,
-                                                running_back_test: running_back_test,
-                                                order_service: order_service)
+# trade_style = MaxAndSinglePositionBollinger.new(coincheck_client: cc,
+#                                                 bollinger_band_service: bollinger_band_service,
+#                                                 logger: logger,
+#                                                 running_back_test: running_back_test,
+#                                                 order_service: order_service)
+
+trade_style = DoublePosition.new(coincheck_client: cc,
+                                 logger: logger,
+                                 running_back_test: running_back_test,
+                                 go_spreadsheet_service: go_spreadsheet_service,
+                                 order_service: order_service)
+
 loop do
   # 強制終了の確認
   begin
@@ -211,7 +224,7 @@ loop do
     count += 1
 
     if running_back_test
-      rate_res = trade_stype.response_read_ticker
+      rate_res = trade_style.response_read_ticker
       btc_jpy_bid_rate =  BigDecimal(JSON.parse(rate_res.body)['bid']) # 現在の買い注文の最高価格
       btc_jpy_ask_rate =  BigDecimal(JSON.parse(rate_res.body)['ask']) # 現在の売り注文の最安価格
       timestamp =  JSON.parse(rate_res.body)['timestamp'].to_i

@@ -128,7 +128,7 @@ class MaxAndSinglePositionBollinger
                          else
                            "損切"
                          end
-            message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
+            message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_bid_rate.to_i}で#{trade_type}"
             @order_service.execute(order_type: "close_short",
                                    rate: btc_jpy_bid_rate.to_i,
                                    amount: positions.first["amount"],
