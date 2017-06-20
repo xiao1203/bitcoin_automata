@@ -22,4 +22,9 @@ module HttpModule
     request.body = body.to_json if body
     http_request(uri, request)
   end
+
+  def request_for_delete(uri, headers)
+    request = Net::HTTP::Delete.new(uri.request_uri, initheader = headers)
+    http_request(uri, request)
+  end
 end

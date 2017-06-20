@@ -95,6 +95,10 @@ if running_back_test
   puts msg
   logger.info(msg)
 
+  # ポジションの初期化
+  uri = URI.parse(COIN_CHECK_BASE_URL + "api/delete_all_positions")
+  request_for_delete(uri, HEADER)
+
   # public APIに相当するgemのメソッドはパラメータを渡せないから過去データ検証ができない。
   # 代替案ができるまでAPIを直接呼ぶようにします。
   # 過去データの検証のためには引数を渡すか、呼び出された先でuserの判別ができれば良いが、

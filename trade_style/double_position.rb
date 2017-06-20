@@ -28,6 +28,9 @@ class DoublePosition
     @response_read_trades
     @response_read_order_books
     @response_original_read_rate
+
+    @loss_value = 0
+    @gain_rate = 0
   end
 
   # トレード処理
@@ -50,24 +53,24 @@ class DoublePosition
     #coincheckのレート取得
     @response_original_read_rate = @cc.original_read_rate
 
-    if @go_spreadsheet_service && @go_spreadsheet_service.ws_info[:double_position][:data_time] != Time.at(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-      value_lines = []
-      value_lines << Time.at(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-      value_lines << spread
-      @go_spreadsheet_service.set_line(lines: value_lines,
-                                       x_position: 1,
-                                       y_position: @go_spreadsheet_service.ws_info[:double_position][:row_index],
-                                       sheet_index: 0)
-      @go_spreadsheet_service.ws_info[:double_position][:row_index] += 1
-      @go_spreadsheet_service.ws_info[:double_position][:data_time] = Time.at(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-    end
+    # if @go_spreadsheet_service && @go_spreadsheet_service.ws_info[:double_position][:data_time] != Time.at(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    #   value_lines = []
+    #   value_lines << Time.at(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    #   value_lines << spread
+    #   @go_spreadsheet_service.set_line(lines: value_lines,
+    #                                    x_position: 1,
+    #                                    y_position: @go_spreadsheet_service.ws_info[:double_position][:row_index],
+    #                                    sheet_index: 0)
+    #   @go_spreadsheet_service.ws_info[:double_position][:row_index] += 1
+    #   @go_spreadsheet_service.ws_info[:double_position][:data_time] = Time.at(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    # end
 
     # ポジションの確認
     sleep 1 unless @running_back_test
     response = @cc.read_positions(status: "open")
     positions = JSON.parse(response.body)["data"]
 
-    if positions.empty? && spread < 15
+    if positions.empty? && spread < 10
       # ポジション無し、かつスプレッドが15以下になったら両建て
 
       # 証拠金の確認
@@ -99,6 +102,7 @@ class DoublePosition
                              timestamp: timestamp,
                              message: message)
 
+      # TODO 両建できなかった時の対応
     end
 
     unless positions.empty?
@@ -109,10 +113,12 @@ class DoublePosition
 
         ## ロングポジション
         long_open_rate = long_position["open_rate"].to_f
-        long_loss_cut_rate = (long_open_rate * 0.98).to_i
+        long_loss_cut_rate = (long_open_rate * 0.998).to_i
         if long_loss_cut_rate >= btc_jpy_bid_rate
           trade_type = "損切"
-          message = "#{Time.at(timestamp)}に#{long_position['open_rate']}円のロングポジションを#{btc_jpy_bid_rate.to_i}で#{trade_type}"
+          @loss_value = ((btc_jpy_bid_rate - BigDecimal(long_position["open_rate"])) * BigDecimal(long_position["amount"])).to_i
+
+          message = "#{Time.at(timestamp)}に#{long_position['open_rate']}円のロングポジションを#{btc_jpy_bid_rate.to_i}で#{trade_type}。#{@loss_value}円"
           @order_service.execute(order_type: "close_long",
                                  rate: btc_jpy_bid_rate.to_i,
                                  amount: long_position["amount"],
@@ -125,16 +131,18 @@ class DoublePosition
 
         ## ショートポジション
         short_open_rate = short_position["open_rate"].to_f
-        short_loss_cut_rate = (short_open_rate * 0.98).to_i
+        short_loss_cut_rate = (short_open_rate * 1.002).to_i
         if short_loss_cut_rate <= btc_jpy_ask_rate
+          # 損切りラインのshort_loss_cut_rateまでbtc_jpy_ask_rateが上がった
           trade_type = "損切"
-          binding.pry
-          message = "#{Time.at(timestamp)}に#{positions[0]['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}"
+          @loss_value = ((BigDecimal(short_position["open_rate"]) - btc_jpy_ask_rate) * BigDecimal(short_position["amount"])).to_i
+
+          message = "#{Time.at(timestamp)}に#{short_position['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}。#{@loss_value}円"
           @order_service.execute(order_type: "close_short",
                                  rate: btc_jpy_ask_rate.to_i,
-                                 amount: positions.first["amount"],
+                                 amount: short_position["amount"],
                                  market_buy_amount: nil,
-                                 position_id: positions.first["id"],
+                                 position_id: short_position["id"],
                                  pair: "btc_jpy",
                                  timestamp: timestamp,
                                  message: message)
@@ -148,22 +156,68 @@ class DoublePosition
           # ロングポジションが存在
           ## 現在の利益
           ## 利確ポイントを更新
-          (btc_jpy_bid_rate - BigDecimal(long_position["open_rate"])) * BigDecimal(long_position["amount"])
-          binding.pry
+          profit_value = ((btc_jpy_bid_rate - BigDecimal(long_position["open_rate"])) * BigDecimal(long_position["amount"])).to_i
+
+          if !@loss_value.zero? && @loss_value.abs < profit_value * 1.001
+            @loss_value = 0
+            @gain_rate = btc_jpy_bid_rate
+          end
+
+          unless @gain_rate.zero?
+
+            if @gain_rate > btc_jpy_bid_rate
+              # 利益があるうちに決済
+              trade_type = "利確"
+
+              message = "#{Time.at(timestamp)}に#{long_position['open_rate']}円のロングポジションを#{btc_jpy_bid_rate.to_i}で#{trade_type}。#{profit_value}円"
+              @order_service.execute(order_type: "close_long",
+                                     rate: btc_jpy_bid_rate.to_i,
+                                     amount: long_position["amount"],
+                                     market_buy_amount: nil,
+                                     position_id: long_position["id"],
+                                     pair: "btc_jpy",
+                                     timestamp: timestamp,
+                                     message: message)
+              @gain_rate = 0
+            else
+              # 更新
+              @gain_rate = btc_jpy_bid_rate
+            end
+          end
+
         else
           # ショートポジションが存在
-          (BigDecimal(short_position["open_rate"]) - btc_jpy_ask_rate) * BigDecimal(short_position["amount"])
-          binding.pry
-        end
+          ## 現在の利益
+          ## 利確ポイントを更新
+          profit_value = ((BigDecimal(short_position["open_rate"]) - btc_jpy_ask_rate) * BigDecimal(short_position["amount"])).to_i
 
+          if !@loss_value.zero? && @loss_value.abs < profit_value * 1.001
+            @loss_value = 0
+            @gain_rate = btc_jpy_ask_rate
+          end
+
+          unless @gain_rate.zero?
+            if @gain_rate < btc_jpy_ask_rate
+              # 利益があるうちに決済
+              trade_type = "利確"
+
+              message = "#{Time.at(timestamp)}に#{short_position['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}。#{profit_value}円"
+              @order_service.execute(order_type: "close_short",
+                                     rate: btc_jpy_ask_rate.to_i,
+                                     amount: short_position["amount"],
+                                     market_buy_amount: nil,
+                                     position_id: short_position["id"],
+                                     pair: "btc_jpy",
+                                     timestamp: timestamp,
+                                     message: message)
+              @gain_rate = 0
+            else
+              # 更新
+              @gain_rate = btc_jpy_ask_rate
+            end
+          end
+        end
       end
     end
-
-
-
   end
-
-
-
-
 end
