@@ -193,10 +193,17 @@ count = 0
 #                                                 running_back_test: running_back_test,
 #                                                 order_service: order_service)
 
+parameter_hash = {
+    spread_range: 18,
+    long_loss_cut_rate: 2,
+    short_loss_cut_rate: 1,
+    profit_set_rate: 6
+}
 trade_style = DoublePosition.new(coincheck_client: cc,
                                  logger: logger,
                                  running_back_test: running_back_test,
                                  go_spreadsheet_service: go_spreadsheet_service,
+                                 parameter_hash: parameter_hash,
                                  order_service: order_service)
 
 loop do

@@ -9,6 +9,7 @@ class DoublePosition
                  running_back_test: nil,
                  order_service: nil,
                  go_spreadsheet_service: nil,
+                 parameter_hash: {},
                  csv_data_list: {})
 
     @cc = coincheck_client
@@ -31,6 +32,25 @@ class DoublePosition
 
     @loss_value = 0
     @gain_rate = 0
+
+    unless parameter_hash.empty?
+      # 10 〜 31
+      @spread_range = parameter_hash[:spread_range]
+
+      # 0.999 〜 0.990 (0.001...0.010)
+      @long_loss_cut_rate = 1.000 - (parameter_hash[:long_loss_cut_rate] * 0.001)
+
+      # 1.001 〜 1.01 (0.001...0.010)
+      @short_loss_cut_rate = 1.000 + (parameter_hash[:short_loss_cut_rate] * 0.001)
+
+      # 1.001 〜 1.01 (0.001...0.010)
+      @profit_set_rate = 1.000 + (parameter_hash[:profit_set_rate] * 0.001)
+    else
+      @spread_range = 10
+      @long_loss_cut_rate = 0.998
+      @short_loss_cut_rate = 1.002
+      @profit_set_rate = 1.001
+    end
   end
 
   # トレード処理
@@ -70,7 +90,7 @@ class DoublePosition
     response = @cc.read_positions(status: "open")
     positions = JSON.parse(response.body)["data"]
 
-    if positions.empty? && spread < 10
+    if positions.empty? && spread < @spread_range
       # ポジション無し、かつスプレッドが15以下になったら両建て
 
       # 証拠金の確認
@@ -113,7 +133,7 @@ class DoublePosition
 
         ## ロングポジション
         long_open_rate = long_position["open_rate"].to_f
-        long_loss_cut_rate = (long_open_rate * 0.998).to_i
+        long_loss_cut_rate = (long_open_rate * @long_loss_cut_rate).to_i
         if long_loss_cut_rate >= btc_jpy_bid_rate
           trade_type = "損切"
           @loss_value = ((btc_jpy_bid_rate - BigDecimal(long_position["open_rate"])) * BigDecimal(long_position["amount"])).to_i
@@ -131,7 +151,7 @@ class DoublePosition
 
         ## ショートポジション
         short_open_rate = short_position["open_rate"].to_f
-        short_loss_cut_rate = (short_open_rate * 1.002).to_i
+        short_loss_cut_rate = (short_open_rate * @short_loss_cut_rate).to_i
         if short_loss_cut_rate <= btc_jpy_ask_rate
           # 損切りラインのshort_loss_cut_rateまでbtc_jpy_ask_rateが上がった
           trade_type = "損切"
@@ -158,7 +178,7 @@ class DoublePosition
           ## 利確ポイントを更新
           profit_value = ((btc_jpy_bid_rate - BigDecimal(long_position["open_rate"])) * BigDecimal(long_position["amount"])).to_i
 
-          if !@loss_value.zero? && @loss_value.abs < profit_value * 1.001
+          if !@loss_value.zero? && @loss_value.abs < profit_value * @profit_set_rate
             @loss_value = 0
             @gain_rate = btc_jpy_bid_rate
           end
@@ -191,7 +211,7 @@ class DoublePosition
           ## 利確ポイントを更新
           profit_value = ((BigDecimal(short_position["open_rate"]) - btc_jpy_ask_rate) * BigDecimal(short_position["amount"])).to_i
 
-          if !@loss_value.zero? && @loss_value.abs < profit_value * 1.001
+          if !@loss_value.zero? && @loss_value.abs < profit_value * @profit_set_rate
             @loss_value = 0
             @gain_rate = btc_jpy_ask_rate
           end
