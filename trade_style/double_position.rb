@@ -163,7 +163,7 @@ class DoublePosition
             @gain_rate = btc_jpy_bid_rate
           end
 
-          unless @gain_rate.zero?
+          unless @gain_rate.zero? # ここは更新が入った、という意味
 
             if @gain_rate > btc_jpy_bid_rate
               # 利益があるうちに決済
@@ -196,7 +196,7 @@ class DoublePosition
             @gain_rate = btc_jpy_ask_rate
           end
 
-          unless @gain_rate.zero?
+          unless @gain_rate.zero? # ここは更新が入った、という意味
             if @gain_rate < btc_jpy_ask_rate
               # 利益があるうちに決済
               trade_type = "利確"
