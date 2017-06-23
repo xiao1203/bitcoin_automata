@@ -207,12 +207,10 @@ count = 0
 #                                                 running_back_test: running_back_test,
 #                                                 order_service: order_service)
 
-parameter_hash = {
-    spread_range: 5,
-    long_loss_cut_rate: 1,
-    short_loss_cut_rate: 2,
-    profit_set_rate: 7
-}
+parameter_hash = {:spread_range=>12,
+     :long_loss_cut_rate=>3,
+     :short_loss_cut_rate=>3,
+     :profit_set_rate=>2}
 trade_style = DoublePosition.new(coincheck_client: cc,
                                  logger: logger,
                                  running_back_test: running_back_test,
@@ -243,6 +241,41 @@ loop do
       break
     elsif messages.find { |msg| msg == "動作確認" }
       chat.send_message(message: "処理実行しています")
+    elsif messages.find { |msg| msg == "現状確認" }
+      res = cc.read_positions(status: "open")
+      positions = JSON.parse(res.body)["data"]
+      position_str = if positions.count.zero?
+                       "なし"
+                     else
+                       tmp_str = ""
+                       long_positions = positions.select { |p| p["side"] == "buy" }
+                       short_positions = positions.select { |p| p["side"] == "sell" }
+                       long_positions.each_with_index do |long_position, index|
+                         if index.zero?
+                           tmp_str += "ロングポジションあり"
+                         end
+                         tmp_str += " レート:#{long_position["open_rate"].to_f}、数量:#{long_position["amount"]}、建てた時間:#{long_position["created_at"]}¥n"
+                       end
+
+                       short_positions.each_with_index do |short_position, index|
+                         if index.zero?
+                           tmp_str += "ショートポジションあり"
+                         end
+                         tmp_str += " レート:#{short_position["open_rate"].to_f}、数量:#{short_position["amount"]}、建てた時間:#{short_position["created_at"]}¥n"
+                       end
+
+                       tmp_str
+                     end
+
+      sleep 1
+      response = cc.read_leverage_balance
+      margin_available = JSON.parse(response.body)['margin_available']['jpy']
+      msg = <<-EOS
+ポジション: #{position_str}
+証拠金の状態: #{margin_available}
+      EOS
+      chat.send_message(message: msg)
+      logger.info(msg)
     end
 
     if save_seed
@@ -273,12 +306,6 @@ loop do
       # 登録済みテストデータ分の処理を実行したかを確認
       uri = URI.parse(COIN_CHECK_BASE_URL + "api/check_test_trade_is_over")
       response = request_for_get(uri, HEADER)
-
-      begin
-        JSON.parse(response.body)["test_trade_is_over?"]
-      rescue => e
-        binding.pry
-      end
 
       if JSON.parse(response.body)["test_trade_is_over?"]
         # ポジションの強制決済

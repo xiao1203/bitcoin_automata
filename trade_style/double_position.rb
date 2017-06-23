@@ -220,7 +220,6 @@ class DoublePosition
             if @gain_rate < btc_jpy_ask_rate
               # 利益があるうちに決済
               trade_type = "利確"
-
               message = "#{Time.at(timestamp)}に#{short_position['open_rate']}円のショートポジションを#{btc_jpy_ask_rate.to_i}で#{trade_type}。#{profit_value}円"
               @order_service.execute(order_type: "close_short",
                                      rate: btc_jpy_ask_rate.to_i,
