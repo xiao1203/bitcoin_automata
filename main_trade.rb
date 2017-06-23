@@ -83,22 +83,6 @@ else
 end
 
 if running_back_test
-  # 登録済みヒストリカルデータより開始時間を設定
-  uri = URI.parse(COIN_CHECK_BASE_URL + "api/set_test_trade_time")
-  request_for_put(uri, HEADER)
-
-  # 検証用の証拠金を設定
-  test_margin = 200_000
-  uri = URI.parse(COIN_CHECK_BASE_URL + "api/set_user_leverage_balance?margin=#{test_margin}")
-  request_for_put(uri, HEADER)
-  msg = "テスト証拠金：#{test_margin}円セット"
-  puts msg
-  logger.info(msg)
-
-  # ポジションの初期化
-  uri = URI.parse(COIN_CHECK_BASE_URL + "api/delete_all_positions")
-  request_for_delete(uri, HEADER)
-
   # public APIに相当するgemのメソッドはパラメータを渡せないから過去データ検証ができない。
   # 代替案ができるまでAPIを直接呼ぶようにします。
   # 過去データの検証のためには引数を渡すか、呼び出された先でuserの判別ができれば良いが、
@@ -153,6 +137,36 @@ go_spreadsheet_service = GoSpreadSheetService.new(GOOGLE_CLIENT_ID,
 
 chat = ChatworkService.new(CHATWORK_API_ID, CHATWORK_ROOM_ID, true)
 
+if running_back_test
+  # 登録済みヒストリカルデータより開始時間を設定
+  uri = URI.parse(COIN_CHECK_BASE_URL + "api/set_test_trade_time")
+  request_for_put(uri, HEADER)
+
+  # 検証用の証拠金を設定
+  test_margin = 200_000
+  3.times do
+    sleep 2
+    uri = URI.parse(COIN_CHECK_BASE_URL + "api/set_user_leverage_balance?margin=#{test_margin}")
+    request_for_put(uri, HEADER)
+    response = cc.read_leverage_balance
+    if JSON.parse(response.body)['margin_available']['jpy'] == test_margin
+      break
+    else
+      puts "証拠金設定失敗"
+      sleep 3
+    end
+    break
+  end
+
+  msg = "テスト証拠金：#{test_margin}円セット"
+  puts msg
+  logger.info(msg)
+
+  # ポジションの初期化
+  uri = URI.parse(COIN_CHECK_BASE_URL + "api/delete_all_positions")
+  request_for_delete(uri, HEADER)
+end
+
 bollinger_band_service_params = {}
 if init_gene_code
   bollinger_band_service_params = {
@@ -194,10 +208,10 @@ count = 0
 #                                                 order_service: order_service)
 
 parameter_hash = {
-    spread_range: 18,
-    long_loss_cut_rate: 2,
-    short_loss_cut_rate: 1,
-    profit_set_rate: 6
+    spread_range: 5,
+    long_loss_cut_rate: 1,
+    short_loss_cut_rate: 2,
+    profit_set_rate: 7
 }
 trade_style = DoublePosition.new(coincheck_client: cc,
                                  logger: logger,
@@ -205,6 +219,18 @@ trade_style = DoublePosition.new(coincheck_client: cc,
                                  go_spreadsheet_service: go_spreadsheet_service,
                                  parameter_hash: parameter_hash,
                                  order_service: order_service)
+
+# parameter_hash = {
+#
+# }
+#
+# trade_style = AdvanceDoublePosition.new(coincheck_client: cc,
+#                                         logger: logger,
+#                                         running_back_test: running_back_test,
+#                                         go_spreadsheet_service: go_spreadsheet_service,
+#                                         parameter_hash: parameter_hash,
+#                                         order_service: order_service)
+
 
 loop do
   # 強制終了の確認
@@ -247,6 +273,12 @@ loop do
       # 登録済みテストデータ分の処理を実行したかを確認
       uri = URI.parse(COIN_CHECK_BASE_URL + "api/check_test_trade_is_over")
       response = request_for_get(uri, HEADER)
+
+      begin
+        JSON.parse(response.body)["test_trade_is_over?"]
+      rescue => e
+        binding.pry
+      end
 
       if JSON.parse(response.body)["test_trade_is_over?"]
         # ポジションの強制決済

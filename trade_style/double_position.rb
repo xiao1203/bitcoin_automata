@@ -30,7 +30,7 @@ class DoublePosition
     @response_read_order_books
     @response_original_read_rate
 
-    @loss_value = 0
+    @loss_value = 0 # 損切りの確定値（この金額で損切りを実施したので、逆ポジの利確はこれの絶対値以上になること）
     @gain_rate = 0
 
     unless parameter_hash.empty?
